@@ -35,22 +35,22 @@ pipeline {
             }
         }
 
-        // stage('SonarQube Analysis') {
-        //     steps {
-        //         echo "🔍 Running SonarQube analysis..."
-        //         withCredentials([
-        //             string(credentialsId: 'sonar_token', variable: 'SONAR_TOKEN')
-        //         ]) {
-        //             sh """
-        //                 mvn sonar:sonar \
-        //                 -Dsonar.projectKey=wwp \
-        //                 -Dsonar.host.url=${SONAR_HOST_URL} \
-        //                 -Dsonar.token=${SONAR_TOKEN} \
-        //                 -Dsonar.java.binaries=target/classes
-        //             """
-        //         }
-        //     }
-        // }
+        stage('SonarQube Analysis') {
+            steps {
+                echo "🔍 Running SonarQube analysis..."
+                withCredentials([
+                    string(credentialsId: 'sonar_token', variable: 'SONAR_TOKEN')
+                ]) {
+                    sh """
+                        mvn sonar:sonar \
+                        -Dsonar.projectKey=wwp \
+                        -Dsonar.host.url=${SONAR_HOST_URL} \
+                        -Dsonar.token=${SONAR_TOKEN} \
+                        -Dsonar.java.binaries=target/classes
+                    """
+                }
+            }
+        }
 
         stage('Extract Version') {
             steps {
