@@ -13,7 +13,7 @@ pipeline {
 
         // Docker
         DOCKERHUB_CREDENTIALS = "dockerhub_creds"
-        DOCKER_IMAGE = "9346278398/wwp:1.0"
+        DOCKER_IMAGE = "9346278398/wwp:latest"
 
         // Maven
         MAVEN_HOME = tool name: 'maven', type: 'maven'
@@ -50,28 +50,10 @@ pipeline {
             }
         }
 
-        stage('Extract Version') {
-            steps {
-                script {
-                    env.ART_VERSION = sh(
-                        script: "${MAVEN_HOME}/bin/mvn help:evaluate -Dexpression=project.version -q -DforceStdout",
-                        returnStdout: true
-                    ).trim()
-                    echo "📦 Artifact Version: ${ART_VERSION}"
-                }
-            }
-        }
-
         stage('Publish to Nexus') {
             steps {
                 script {
-                    def warFile = sh(
-                        script: "find target -name '*.war' -print -quit",
-                        returnStdout: true
-                    ).trim()
-
-                    def releaseVersion = "${ART_VERSION}-${BUILD_NUMBER}"
-
+                    def warFile = sh(script: "find target -name '*.war' -print -quit", returnStdout: true).trim()
                     echo "🚀 Uploading WAR to Nexus..."
                     nexusArtifactUploader(
                         nexusVersion: 'nexus3',
@@ -80,7 +62,7 @@ pipeline {
                         repository: NEXUS_REPOSITORY,
                         credentialsId: NEXUS_CREDENTIAL_ID,
                         groupId: 'koddas.web.war',
-                        version: releaseVersion,
+                        version: "${BUILD_NUMBER}",
                         artifacts: [[
                             artifactId: 'wwp',
                             classifier: '',
