@@ -2,23 +2,35 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_CREDENTIALS = 'dockerhub_creds'
-        DOCKER_IMAGE = '9346278398/wwp:1.0'
+        // SonarQube
         SONAR_HOST_URL = "http://65.0.128.46:9000"
+        SONAR_PROJECT_KEY = "wwp"
+
+        // Nexus
+        NEXUS_URL = "65.2.6.21:8081"
+        NEXUS_REPOSITORY = "maven-releases"
+        NEXUS_CREDENTIAL_ID = "nexus_creds"
+
+        // Docker
+        DOCKERHUB_CREDENTIALS = "dockerhub_creds"
+        DOCKER_IMAGE = "9346278398/wwp:1.0"
+
+        // Maven
+        MAVEN_HOME = tool name: 'maven', type: 'maven'
     }
 
-    tools { maven "maven" }
-
     stages {
-
         stage('Checkout') {
-            steps { checkout scm }
+            steps {
+                echo "📥 Checking out code from GitHub..."
+                checkout scm
+            }
         }
 
         stage('Build WAR') {
             steps {
                 echo "🔨 Building WAR..."
-                sh 'mvn clean package -DskipTests'
+                sh "${MAVEN_HOME}/bin/mvn clean package -DskipTests"
                 archiveArtifacts artifacts: 'target/*.war'
             }
         }
@@ -28,12 +40,54 @@ pipeline {
                 echo "🔍 Running SonarQube analysis..."
                 withCredentials([string(credentialsId: 'sonar_token', variable: 'SONAR_TOKEN')]) {
                     sh """
-                        mvn sonar:sonar \
-                        -Dsonar.projectKey=wwp \
+                        ${MAVEN_HOME}/bin/mvn sonar:sonar \
+                        -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
                         -Dsonar.host.url=${SONAR_HOST_URL} \
                         -Dsonar.token=${SONAR_TOKEN} \
                         -Dsonar.java.binaries=target/classes
                     """
+                }
+            }
+        }
+
+        stage('Extract Version') {
+            steps {
+                script {
+                    env.ART_VERSION = sh(
+                        script: "${MAVEN_HOME}/bin/mvn help:evaluate -Dexpression=project.version -q -DforceStdout",
+                        returnStdout: true
+                    ).trim()
+                    echo "📦 Artifact Version: ${ART_VERSION}"
+                }
+            }
+        }
+
+        stage('Publish to Nexus') {
+            steps {
+                script {
+                    def warFile = sh(
+                        script: "find target -name '*.war' -print -quit",
+                        returnStdout: true
+                    ).trim()
+
+                    def releaseVersion = "${ART_VERSION}-${BUILD_NUMBER}"
+
+                    echo "🚀 Uploading WAR to Nexus..."
+                    nexusArtifactUploader(
+                        nexusVersion: 'nexus3',
+                        protocol: 'http',
+                        nexusUrl: NEXUS_URL,
+                        repository: NEXUS_REPOSITORY,
+                        credentialsId: NEXUS_CREDENTIAL_ID,
+                        groupId: 'koddas.web.war',
+                        version: releaseVersion,
+                        artifacts: [[
+                            artifactId: 'wwp',
+                            classifier: '',
+                            file: warFile,
+                            type: 'war'
+                        ]]
+                    )
                 }
             }
         }
@@ -66,13 +120,16 @@ pipeline {
 
     post {
         success {
-            echo "✅ Pipeline completed successfully"
-            echo "🔗 SonarQube: ${SONAR_HOST_URL}/dashboard?id=wwp"
-            echo "🌐 Docker Container: wwp-app running on port 8080"
+            echo "✅ Pipeline completed successfully!"
+            echo "🔗 SonarQube: ${SONAR_HOST_URL}/dashboard?id=${SONAR_PROJECT_KEY}"
+            echo "📦 Nexus: http://${NEXUS_URL}"
+            echo "🌐 Docker container: wwp-app running on port 8080"
         }
-
-        failure { echo "❌ Pipeline failed — check logs" }
-
-        always { echo "🧹 Pipeline execution finished" }
+        failure {
+            echo "❌ Pipeline failed — check logs"
+        }
+        always {
+            echo "🧹 Pipeline execution finished"
+        }
     }
 }
