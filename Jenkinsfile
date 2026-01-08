@@ -2,29 +2,17 @@ pipeline {
     agent any
 
     environment {
-        // -------- SonarQube --------
+        DOCKERHUB_CREDENTIALS = 'dockerhub_creds'
+        DOCKER_IMAGE = '9346278398/wwp:1.0'
         SONAR_HOST_URL = "http://65.0.128.46:9000"
-
-        // -------- Nexus --------
-        NEXUS_URL = "65.2.6.21:8081"
-        NEXUS_REPOSITORY = "maven-releases"
-        NEXUS_CREDENTIAL_ID = "nexus_creds"
-
-        // -------- Tomcat --------
-        TOMCAT_URL = "http://13.203.74.89:8080"
-        TOMCAT_CONTEXT = "wwp"
     }
 
-    tools {
-        maven "maven"
-    }
+    tools { maven "maven" }
 
     stages {
 
         stage('Checkout') {
-            steps {
-                checkout scm
-            }
+            steps { checkout scm }
         }
 
         stage('Build WAR') {
@@ -38,9 +26,7 @@ pipeline {
         stage('SonarQube Analysis') {
             steps {
                 echo "🔍 Running SonarQube analysis..."
-                withCredentials([
-                    string(credentialsId: 'sonar_token', variable: 'SONAR_TOKEN')
-                ]) {
+                withCredentials([string(credentialsId: 'sonar_token', variable: 'SONAR_TOKEN')]) {
                     sh """
                         mvn sonar:sonar \
                         -Dsonar.projectKey=wwp \
@@ -52,65 +38,28 @@ pipeline {
             }
         }
 
-        stage('Extract Version') {
+        stage('Build Docker Image') {
             steps {
-                script {
-                    env.ART_VERSION = sh(
-                        script: "mvn help:evaluate -Dexpression=project.version -q -DforceStdout",
-                        returnStdout: true
-                    ).trim()
-                    echo "📦 Artifact Version: ${ART_VERSION}"
+                echo "🐳 Building Docker image..."
+                sh "docker build -t ${DOCKER_IMAGE} ."
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                echo "📤 Pushing Docker image to Docker Hub..."
+                withCredentials([usernamePassword(credentialsId: DOCKERHUB_CREDENTIALS, usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh "echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin"
+                    sh "docker push ${DOCKER_IMAGE}"
                 }
             }
         }
 
-        stage('Publish to Nexus') {
+        stage('Run Docker Container') {
             steps {
-                script {
-                    def warFile = sh(
-                        script: "find target -name '*.war' -print -quit",
-                        returnStdout: true
-                    ).trim()
-
-                    def releaseVersion = "${ART_VERSION}-${BUILD_NUMBER}"
-
-                    echo "🚀 Uploading WAR to Nexus"
-
-                    nexusArtifactUploader(
-                        nexusVersion: 'nexus3',
-                        protocol: 'http',
-                        nexusUrl: NEXUS_URL,
-                        repository: NEXUS_REPOSITORY,
-                        credentialsId: NEXUS_CREDENTIAL_ID,
-                        groupId: 'koddas.web.war',
-                        version: releaseVersion,
-                        artifacts: [[
-                            artifactId: 'wwp',
-                            classifier: '',
-                            file: warFile,
-                            type: 'war'
-                        ]]
-                    )
-                }
-            }
-        }
-
-        stage('Deploy to Tomcat') {
-            steps {
-                echo "🚀 Deploying WAR to Tomcat..."
-                sshagent(credentials: ['tomcat_ssh_key']) {
-                    sh """
-                        WAR_FILE=\$(find target -name '*.war' -print -quit)
-
-                        scp -o StrictHostKeyChecking=no \$WAR_FILE ubuntu@13.203.74.89:/tmp/wwp.war
-
-                        ssh -o StrictHostKeyChecking=no ubuntu@13.203.74.89 '
-                            sudo rm -rf /opt/tomcat/webapps/wwp*
-                            sudo mv /tmp/wwp.war /opt/tomcat/webapps/
-                            sudo systemctl restart tomcat
-                        '
-                    """
-                }
+                echo "🚀 Running Docker container..."
+                sh "docker rm -f wwp-app || true"
+                sh "docker run -d --name wwp-app -p 8080:8080 ${DOCKER_IMAGE}"
             }
         }
     }
@@ -119,16 +68,11 @@ pipeline {
         success {
             echo "✅ Pipeline completed successfully"
             echo "🔗 SonarQube: ${SONAR_HOST_URL}/dashboard?id=wwp"
-            echo "📦 Nexus: http://${NEXUS_URL}"
-            echo "🌐 App URL: ${TOMCAT_URL}/${TOMCAT_CONTEXT}"
+            echo "🌐 Docker Container: wwp-app running on port 8080"
         }
 
-        failure {
-            echo "❌ Pipeline failed — check logs"
-        }
+        failure { echo "❌ Pipeline failed — check logs" }
 
-        always {
-            echo "🧹 Pipeline execution finished"
-        }
+        always { echo "🧹 Pipeline execution finished" }
     }
 }
